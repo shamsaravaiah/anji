@@ -11,6 +11,7 @@ import os
 import time
 import requests
 import speech_recognition as sr
+from typing import Optional, Set
 
 # ========= CONFIG =========
 LIGHT_ON_URL = "http://192.168.0.29/on"
@@ -18,18 +19,14 @@ LIGHT_OFF_URL = "http://192.168.0.29/off"
 
 WAKE_WORD = "jarvis"
 
-# If you know part of your USB mic name, put it here (case-insensitive).
-# Example: "usb" or "blue snowball" or "hyperx"
+# Match a mic by substring (case-insensitive). Set env var MIC_NAME_CONTAINS to override.
 PREFERRED_MIC_NAME_CONTAINS = os.environ.get("MIC_NAME_CONTAINS", "usb")
 
-# Speech settings
 LISTEN_TIMEOUT_SEC = 5
 PHRASE_TIME_LIMIT_SEC = 5
-
-# Debounce/cooldown to avoid repeated triggers
 COOLDOWN_SEC = 1.5
 
-# ========= HELPERS =========
+
 def control_light(state: str) -> None:
     url = LIGHT_ON_URL if state == "on" else LIGHT_OFF_URL
     try:
@@ -38,41 +35,47 @@ def control_light(state: str) -> None:
     except requests.exceptions.RequestException as e:
         print(f"[HTTP] ERROR calling {url}: {e}")
 
-def choose_microphone_device_index(prefer_contains: str) -> int | None:
+
+def choose_microphone_device_index(prefer_contains: str) -> Optional[int]:
     names = sr.Microphone.list_microphone_names()
     if not names:
+        print("[MIC] No microphone devices found by SpeechRecognition.")
         return None
 
     prefer_contains = (prefer_contains or "").strip().lower()
 
-    # Try to find a mic by substring match (e.g., "usb")
     if prefer_contains:
         for i, name in enumerate(names):
             if prefer_contains in name.lower():
                 print(f"[MIC] Using device_index={i}: {name}")
                 return i
 
-    # Otherwise just show options and let default happen
     print("[MIC] Available devices:")
     for i, name in enumerate(names):
         print(f"  {i}: {name}")
-
     print("[MIC] No preferred mic matched; using default input device.")
     return None
 
-def normalize_words(text: str) -> set[str]:
-    # Basic tokenization: keep letters/numbers and spaces; split to words
+
+def normalize_words(text: str) -> Set[str]:
     cleaned = []
     for ch in text.lower():
         cleaned.append(ch if ch.isalnum() or ch.isspace() else " ")
     return set(" ".join(cleaned).split())
 
-# ========= MAIN =========
+
 def main() -> None:
     recognizer = sr.Recognizer()
 
+    # Pick mic
     device_index = choose_microphone_device_index(PREFERRED_MIC_NAME_CONTAINS)
-    microphone = sr.Microphone(device_index=device_index) if device_index is not None else sr.Microphone()
+
+    try:
+        microphone = sr.Microphone(device_index=device_index) if device_index is not None else sr.Microphone()
+    except Exception as e:
+        print(f"[MIC] ERROR opening microphone (device_index={device_index}): {e}")
+        print("[MIC] Tip: plug in the USB mic and re-run. Also try setting MIC_NAME_CONTAINS to match the mic name.")
+        return
 
     print("=" * 60)
     print("Voice Light Control (Pi)")
@@ -81,7 +84,7 @@ def main() -> None:
     print("Ctrl+C to exit")
     print("=" * 60)
 
-    # Calibrate once (important for Pi stability)
+    # Calibrate once
     with microphone as source:
         print("[MIC] Calibrating for ambient noise (1s)...")
         recognizer.adjust_for_ambient_noise(source, duration=1.0)
@@ -125,12 +128,12 @@ def main() -> None:
             except sr.UnknownValueError:
                 print("[ASR] Could not understand audio")
             except sr.RequestError as e:
+                # This happens if internet/DNS is down or Google API blocks/limits
                 print(f"[ASR] Speech recognition request error: {e}")
 
             time.sleep(0.1)
 
         except sr.WaitTimeoutError:
-            # No speech within timeout; loop again
             continue
         except KeyboardInterrupt:
             print("\n[SYS] Shutting down...")
@@ -138,6 +141,7 @@ def main() -> None:
         except Exception as e:
             print(f"[SYS] ERROR: {e}")
             time.sleep(1)
+
 
 if __name__ == "__main__":
     main()
