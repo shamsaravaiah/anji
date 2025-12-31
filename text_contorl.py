@@ -7,11 +7,10 @@ Voice-controlled light system (Raspberry Pi version)
 - If it hears "jarvis" + "off" -> GET /off
 """
 
-import os
 import time
 import requests
 import speech_recognition as sr
-from typing import Optional, Set
+from typing import Set
 
 # ========= CONFIG =========
 LIGHT_ON_URL = "http://192.168.0.29/on"
@@ -19,12 +18,13 @@ LIGHT_OFF_URL = "http://192.168.0.29/off"
 
 WAKE_WORD = "jarvis"
 
-# Match a mic by substring (case-insensitive). Set env var MIC_NAME_CONTAINS to override.
-PREFERRED_MIC_NAME_CONTAINS = os.environ.get("MIC_NAME_CONTAINS", "usb")
-
 LISTEN_TIMEOUT_SEC = 5
 PHRASE_TIME_LIMIT_SEC = 5
 COOLDOWN_SEC = 1.5
+
+# From your device list:
+# 2: streamplify Mic.: USB Audio (hw:3,0)
+MIC_DEVICE_INDEX = 2
 
 
 def control_light(state: str) -> None:
@@ -34,27 +34,6 @@ def control_light(state: str) -> None:
         print(f"[HTTP] Light -> {state} (status={r.status_code})")
     except requests.exceptions.RequestException as e:
         print(f"[HTTP] ERROR calling {url}: {e}")
-
-
-def choose_microphone_device_index(prefer_contains: str) -> Optional[int]:
-    names = sr.Microphone.list_microphone_names()
-    if not names:
-        print("[MIC] No microphone devices found by SpeechRecognition.")
-        return None
-
-    prefer_contains = (prefer_contains or "").strip().lower()
-
-    if prefer_contains:
-        for i, name in enumerate(names):
-            if prefer_contains in name.lower():
-                print(f"[MIC] Using device_index={i}: {name}")
-                return i
-
-    print("[MIC] Available devices:")
-    for i, name in enumerate(names):
-        print(f"  {i}: {name}")
-    print("[MIC] No preferred mic matched; using default input device.")
-    return None
 
 
 def normalize_words(text: str) -> Set[str]:
@@ -67,14 +46,13 @@ def normalize_words(text: str) -> Set[str]:
 def main() -> None:
     recognizer = sr.Recognizer()
 
-    # Pick mic
-    device_index = choose_microphone_device_index(PREFERRED_MIC_NAME_CONTAINS)
-
+    # Lock to the known-good USB mic
     try:
-        microphone = sr.Microphone(device_index=device_index) if device_index is not None else sr.Microphone()
+        microphone = sr.Microphone(device_index=MIC_DEVICE_INDEX)
+        print(f"[MIC] Using device_index={MIC_DEVICE_INDEX}")
     except Exception as e:
-        print(f"[MIC] ERROR opening microphone (device_index={device_index}): {e}")
-        print("[MIC] Tip: plug in the USB mic and re-run. Also try setting MIC_NAME_CONTAINS to match the mic name.")
+        print(f"[MIC] ERROR opening microphone (device_index={MIC_DEVICE_INDEX}): {e}")
+        print("[MIC] Run the mic list again and update MIC_DEVICE_INDEX if needed.")
         return
 
     print("=" * 60)
@@ -128,7 +106,6 @@ def main() -> None:
             except sr.UnknownValueError:
                 print("[ASR] Could not understand audio")
             except sr.RequestError as e:
-                # This happens if internet/DNS is down or Google API blocks/limits
                 print(f"[ASR] Speech recognition request error: {e}")
 
             time.sleep(0.1)
@@ -145,3 +122,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
